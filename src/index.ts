@@ -1,77 +1,119 @@
-import { serve } from '@hono/node-server'
-import { Hono } from 'hono'
-import { PrismaClient } from '@prisma/client'
-const app = new Hono()
-const prisma = new PrismaClient()
-// GET /contacts
-app.get("/contacts", async (context) => {
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { prismaClient } from "./prisma";
+import { error } from "console";
+
+const hono = new Hono();
+
+hono.get("/contacts", async (context) => {
   try {
-    const contact = await prisma.contact.findMany()
-    return context.json({contact}, 200)
-  }
-  catch {
-    return context.json({error: " Error fetching contacts"}, 404)
+    const contacts = await prismaClient.contact.findMany();
+
+    return context.json(contacts, 200);
+  } catch (e) {
+    return context.json({ error: "Server Issue" }, 500);
   }
 });
-// POST /contacts
-app.post("/contacts", async (context) => {
-  const { name, phoneNumber, email } = await context.req.json();
+
+hono.post("/contacts", async (context) => {
   try {
-    const contact = await prisma.contact.create(
-      {
-        data: { name: name, phoneNumber: phoneNumber, email: email }
-      });
-    return context.json(contact, 201);
-  }
-  catch {
-    return context.json({ error: "404 Not Found: Error creating contact" }, 404);
-  }
-});
-// PATCH /contacts/:id
-app.patch("/contacts/:id", async (context) => {
-  const id = context.req.param("id");
-  const { name, phoneNumber, email } = await context.req.json();
-  try {
-    const con = await prisma.contact.update({
-      where: { id: id },
-      data: { name:name , phoneNumber: phoneNumber, email: email },
+    const { name, phoneNumber, email } = await context.req.json();
+
+    const existingContact = await prismaClient.contact.findFirst({
+      where: {
+        OR: [
+          {
+            phoneNumber,
+          },
+          {
+            email,
+          },
+        ],
+      },
     });
-    return context.json(
-      {
-        contact: con
-      }, 200);
-  }
-  catch {
-    return context.json({ error: "404 Not Found: Error updating contact" }, 404);
-  }
-});
-// DELETE /contacts/:id
-app.delete("/contacts/:id", async (context) => {
-  const id = context.req.param("id");
-  try {
-    const con = await prisma.contact.delete(
-      {
-        where: { id: id }
+
+    if (existingContact) {
+      return context.json({ error: "Contact already exists" }, 400);
+    } else {
+      const newContact = await prismaClient.contact.create({
+        data: {
+          name,
+          phoneNumber,
+          email,
+        },
       });
-    return context.json({contact: con}, 200)
-  }
-  catch {
-    return context.json({ error: "404 Not Found: Error deleting contact" }, 404);
+
+      return context.json(newContact, 201);
+    }
+  } catch (e) {
+    return context.json({ error: "Server Issue" }, 500);
   }
 });
-serve(app)
 
+hono.patch("/contacts/:id/email", async (context) => {
+  const { id } = context.req.param();
+  const { email } = await context.req.json();
 
+  try {
+    const existingContact = await prismaClient.contact.findUnique({
+      where: {
+        id,
+      },
+    });
 
+    if (!existingContact) {
+      return context.json({ error: "Bad Request" }, 400);
+    }
 
+    const existingContactWithGivenEmail = await prismaClient.contact.findUnique({
+      where: {
+        email,
+      },
+    });
 
+    if (existingContactWithGivenEmail) {
+      return context.json({ error: "Bad Request" }, 400);
+    }
 
+    const updatedContact = await prismaClient.contact.update({
+      where: {
+        id,
+      },
+      data: {
+        email,
+      },
+    });
 
+    return context.json(updatedContact, 200);
+  } catch (e) {
+    return context.json({ error: "Server Issue" }, 500);
+  }
+});
 
+hono.delete("/contact/:id", async (context) => {
+  try {
+    const { id } = context.req.param();
 
+    const existingContact = await prismaClient.contact.findUnique({
+      where: {
+        id,
+      },
+    });
 
+    if (!existingContact) {
+      return context.json({ error: "Bad Request" }, 400);
+    }
 
+    await prismaClient.contact.delete({
+      where: {
+        id,
+      },
+    });
+  } catch (e) {
+    return context.json({ error: "Server Issue" }, 500);
+  }
+});
 
-
-
-
+serve(hono, (info) => {
+  console.log("Server is running on http://localhost:" + info.port);
+});
